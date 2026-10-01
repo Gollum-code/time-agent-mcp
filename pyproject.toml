@@ -1,0 +1,44 @@
+﻿[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "time-agent-mcp"
+version = "0.1.0"
+description = "缁欐病鏈夋椂闂存劅鐨?LLM 瑁呬竴涓椂閽?鈥斺€?time-aware MCP Server (current_time / duration_elapsed / time_until / timezone_convert / session_ping)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "time-agent-mcp contributors" }]
+keywords = ["mcp", "model-context-protocol", "time", "timezone", "agent", "llm", "time-awareness"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = ["mcp>=1.2.0", "pydantic>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/Gollum-code/time-agent-mcp"
+Repository = "https://github.com/Gollum-code/time-agent-mcp"
+"Bug Tracker" = "https://github.com/Gollum-code/time-agent-mcp/issues"
+
+[project.scripts]
+time-agent-mcp = "time_agent_mcp.server:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_py"]
+addopts = "-q"
+pythonpath = ["python"]

@@ -1,0 +1,59 @@
+﻿{
+  "name": "time-agent-mcp",
+  "version": "0.1.0",
+  "description": "缁欐病鏈夋椂闂存劅鐨?LLM 瑁呬竴涓椂閽?鈥斺€?time-aware MCP Server (current_time / duration_elapsed / time_until / timezone_convert / session_ping)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/server.js",
+  "types": "dist/server.d.ts",
+  "bin": {
+    "time-agent-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "prestart": "npm run build",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.js",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "time",
+    "timezone",
+    "agent",
+    "llm",
+    "ollama",
+    "claude",
+    "time-awareness"
+  ],
+  "author": "time-agent-mcp contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gollum-code/time-agent-mcp.git"
+  },
+  "homepage": "https://github.com/Gollum-code/time-agent-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Gollum-code/time-agent-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
