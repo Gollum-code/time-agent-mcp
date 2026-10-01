@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { decomposeDuration } from "../util/time.js";
+import { ClockRecord, emptyClock } from "../util/clock.js";
 
 export interface SessionRecord {
   /** 会话 id */
@@ -19,17 +20,12 @@ export interface SessionRecord {
   lastPingAt: number;
   /** 任务起始时间戳表：taskId -> 起始时刻 */
   tasks: Record<string, number>;
+  /** 会话级计时器表：clockId -> ClockRecord */
+  clocks: Record<string, ClockRecord>;
 }
 
 export interface StoreFile {
   sessions: Record<string, SessionRecord>;
-}
-
-interface SessionLike {
-  id: string;
-  startedAt: number;
-  lastPingAt: number;
-  tasks: Record<string, number>;
 }
 
 const DEFAULT_STORE_FILE = () =>
@@ -53,6 +49,9 @@ export class SessionStore {
       const parsed = JSON.parse(readFileSync(this.filePath!, "utf8")) as StoreFile;
       if (parsed && typeof parsed === "object") {
         for (const rec of Object.values(parsed.sessions ?? {})) {
+          // 老版本落盘可能没有 clocks 字段，兼容补全
+          rec.clocks ??= {};
+          rec.tasks ??= {};
           this.sessions.set(rec.id, rec);
         }
       }
@@ -77,7 +76,7 @@ export class SessionStore {
     this.load();
     let rec = this.sessions.get(id);
     if (!rec) {
-      rec = { id, startedAt: Date.now(), lastPingAt: Date.now(), tasks: {} };
+      rec = { id, startedAt: Date.now(), lastPingAt: Date.now(), tasks: {}, clocks: {} };
       this.sessions.set(id, rec);
     }
     return rec;
@@ -116,6 +115,46 @@ export class SessionStore {
     const rec = this.get(id);
     if (rec) {
       delete rec.tasks[taskId];
+      this.persist();
+    }
+  }
+
+  /** 取会话级计时器（不存在返回 null）。 */
+  getClock(id: string, clockId: string): ClockRecord | null {
+    const rec = this.get(id);
+    return rec?.clocks[clockId] ?? null;
+  }
+
+  /** 读或建一个计时器（不存在则以 emptyClock 初始化并落盘）。 */
+  getOrCreateClock(id: string, clockId: string, now: number): ClockRecord {
+    this.load();
+    let rec = this.sessions.get(id);
+    if (!rec) {
+      rec = { id, startedAt: now, lastPingAt: now, tasks: {}, clocks: {} };
+      this.sessions.set(id, rec);
+    }
+    if (!rec.clocks[clockId]) rec.clocks[clockId] = emptyClock(now);
+    this.persist();
+    return { ...rec.clocks[clockId] };
+  }
+
+  /** 写入一个计时器并落盘。 */
+  setClock(id: string, clockId: string, record: ClockRecord): void {
+    this.load();
+    let rec = this.sessions.get(id);
+    if (!rec) {
+      rec = { id, startedAt: Date.now(), lastPingAt: Date.now(), tasks: {}, clocks: {} };
+      this.sessions.set(id, rec);
+    }
+    rec.clocks[clockId] = record;
+    this.persist();
+  }
+
+  /** 删除一个计时器。 */
+  clearClock(id: string, clockId: string): void {
+    const rec = this.get(id);
+    if (rec) {
+      delete rec.clocks[clockId];
       this.persist();
     }
   }

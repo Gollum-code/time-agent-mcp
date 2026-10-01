@@ -65,5 +65,17 @@ const tc = await send("tools/call", {
 });
 console.log("timezone_convert:", JSON.parse(tc.result.content[0].text).note);
 
+const cm = await send("tools/call", {
+  name: "cron_mock",
+  arguments: { schedule: "0 18 * * *", timezone: "Asia/Shanghai", now: "2026-10-01T04:00:00Z" },
+});
+const cmText = JSON.parse(cm.result.content[0].text);
+console.log("cron_mock:", cmText.description, "| next:", cmText.next_run, "| until:", cmText.time_until_next_human);
+
+const ac1 = await send("tools/call", { name: "agent_clock", arguments: { clock_id: "smoke", action: "start" } });
+const ac2 = await send("tools/call", { name: "agent_clock", arguments: { clock_id: "smoke", action: "status" } });
+console.log("agent_clock start:", JSON.parse(ac1.result.content[0].text).state_label);
+console.log("agent_clock status:", JSON.parse(ac2.result.content[0].text).elapsed_human);
+
 proc.kill();
 process.exit(0);

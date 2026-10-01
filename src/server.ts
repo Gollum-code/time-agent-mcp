@@ -13,8 +13,10 @@ import { durationElapsed, durationElapsedSchema } from "./tools/durationElapsed.
 import { timeUntil, timeUntilSchema } from "./tools/timeUntil.js";
 import { timezoneConvert, timezoneConvertSchema } from "./tools/timezoneConvert.js";
 import { sessionPing, sessionPingSchema } from "./tools/sessionPing.js";
+import { cronMock, cronMockSchema } from "./tools/cronMock.js";
+import { agentClock, agentClockSchema } from "./tools/agentClock.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const store = new SessionStore();
 
 const server = new McpServer(
@@ -58,6 +60,20 @@ server.tool(
   "会话心跳：每次对话调用一次，更新时间戳并返回距上次对话间隔与本会话总时长，让模型感知对话间隔。",
   sessionPingSchema,
   async (args) => sessionPing(store, args)
+);
+
+server.tool(
+  "cron_mock",
+  "定时决策：判断「现在到点了吗」（cron / @宏 / every 30 minutes），返回是否命中、下次与上次触发时刻及倒计时。不启动真实定时器。",
+  cronMockSchema,
+  async (args) => cronMock(args)
+);
+
+server.tool(
+  "agent_clock",
+  "会话级计时器：start 开始 / pause 暂停 / resume 恢复 / reset 清零 / status 查询，返回累计计时与中文可读时长。",
+  agentClockSchema,
+  async (args) => agentClock(store, args)
 );
 
 async function main() {

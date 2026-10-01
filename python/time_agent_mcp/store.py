@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .clock import ClockRecord, empty_clock
 from .util import decompose_duration
 
 
@@ -20,6 +21,27 @@ class SessionRecord:
     started_at: int
     last_ping_at: int
     tasks: dict[str, int] = field(default_factory=dict)
+    clocks: dict[str, ClockRecord] = field(default_factory=dict)
+
+
+def _clock_from_file(data: dict) -> ClockRecord:
+    return ClockRecord(
+        state=data.get("state", "idle"),
+        accumulated_ms=data.get("accumulatedMs", data.get("accumulated_ms", 0)),
+        started_at=data.get("startedAt", data.get("started_at")),
+        paused_at=data.get("pausedAt", data.get("paused_at")),
+        updated_at=data.get("updatedAt", data.get("updated_at", 0)),
+    )
+
+
+def _clock_to_file(c: ClockRecord) -> dict:
+    return {
+        "state": c.state,
+        "accumulatedMs": c.accumulated_ms,
+        "startedAt": c.started_at,
+        "pausedAt": c.paused_at,
+        "updatedAt": c.updated_at,
+    }
 
 
 def _from_file(rec: dict) -> SessionRecord:
@@ -28,13 +50,22 @@ def _from_file(rec: dict) -> SessionRecord:
         id=rec["id"],
         started_at=rec.get("startedAt", rec.get("started_at", 0)),
         last_ping_at=rec.get("lastPingAt", rec.get("last_ping_at", 0)),
-        tasks=rec.get("tasks", {}),
+        tasks=rec.get("tasks", {}) or {},
+        clocks={
+            k: _clock_from_file(v) for k, v in (rec.get("clocks", {}) or {}).items()
+        },
     )
 
 
 def _to_file(rec: SessionRecord) -> dict:
     """以 TS 版同款格式（camelCase）落盘，两版可共享同一文件。"""
-    return {"id": rec.id, "startedAt": rec.started_at, "lastPingAt": rec.last_ping_at, "tasks": rec.tasks}
+    return {
+        "id": rec.id,
+        "startedAt": rec.started_at,
+        "lastPingAt": rec.last_ping_at,
+        "tasks": rec.tasks,
+        "clocks": {k: _clock_to_file(v) for k, v in rec.clocks.items()},
+    }
 
 
 def _default_store_file() -> Path:
@@ -104,6 +135,36 @@ class SessionStore:
         rec = self.get(sid)
         if rec and task_id in rec.tasks:
             del rec.tasks[task_id]
+            self._persist()
+
+    def get_clock(self, sid: str, clock_id: str) -> Optional[ClockRecord]:
+        rec = self.get(sid)
+        return rec.clocks.get(clock_id) if rec else None
+
+    def get_or_create_clock(self, sid: str, clock_id: str, now: int) -> ClockRecord:
+        self._load()
+        rec = self._sessions.get(sid)
+        if rec is None:
+            rec = SessionRecord(id=sid, started_at=now, last_ping_at=now)
+            self._sessions[sid] = rec
+        if clock_id not in rec.clocks:
+            rec.clocks[clock_id] = empty_clock(now)
+        self._persist()
+        return rec.clocks[clock_id]
+
+    def set_clock(self, sid: str, clock_id: str, record: ClockRecord) -> None:
+        self._load()
+        rec = self._sessions.get(sid)
+        if rec is None:
+            rec = SessionRecord(id=sid, started_at=_now_ms(), last_ping_at=_now_ms())
+            self._sessions[sid] = rec
+        rec.clocks[clock_id] = record
+        self._persist()
+
+    def clear_clock(self, sid: str, clock_id: str) -> None:
+        rec = self.get(sid)
+        if rec and clock_id in rec.clocks:
+            del rec.clocks[clock_id]
             self._persist()
 
 

@@ -10,6 +10,8 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from . import __version__
+from .clock import clock_elapsed, clock_transition
+from .cron import evaluate_cron
 from .store import SessionStore, build_duration_result
 from .util import (
     decompose_duration,
@@ -202,6 +204,106 @@ def session_ping(session_id: str = "default", timezone: str | None = None) -> st
                 else "距上次对话已超过 1 分钟，请留意时间流逝。" if now - before.last_ping_at > 60_000
                 else "对话仍连续进行中。"
             ),
+        }
+    )
+
+
+@mcp.tool()
+def cron_mock(schedule: str, timezone: str | None = None, now: str | None = None) -> str:
+    """定时决策：判断「现在到点了吗」（cron / @宏 / every 30 minutes），返回是否命中、下次与上次触发时刻及倒计时。不启动真实定时器。"""
+    if timezone and not valid_timezone(timezone):
+        return error_text(f"无效时区: {timezone}")
+    now_ms = _now_ms()
+    if now is not None:
+        parsed = parse_to_utc(now, timezone)
+        if parsed is None:
+            return error_text(f"无法解析 now 时刻: {now}")
+        now_ms = int(parsed.timestamp() * 1000)
+
+    try:
+        r = evaluate_cron(schedule, timezone, now_ms)
+    except ValueError as e:
+        return error_text(f"cron 解析失败: {e}")
+
+    sch = r["schedule"]
+    next_iso = None if r["next_run"] is None else _iso_utc(r["next_run"])
+    last_iso = None if r["last_run"] is None else _iso_utc(r["last_run"])
+    remaining = r["time_until_next"]
+    since = r["since_last"]
+    verdict = (
+        "已到点"
+        if r["matches_now"]
+        else "未来 5 年内不会触发"
+        if r["next_run"] is None
+        else f"未到点，{remaining['human']}后触发"
+    )
+    return json_text(
+        {
+            "ok": True,
+            "schedule": schedule,
+            "parsed": sch.expr,
+            "description": r["human_summary"],
+            "timezone": snapshot(_now_datetime(), timezone or _default_tz())["timezone"],
+            "now_iso": snapshot(_now_datetime(), timezone or _default_tz())["iso"],
+            "unix_now": now_ms,
+            "matches_now": r["matches_now"],
+            "next_run": next_iso,
+            "time_until_next_human": None if remaining is None else remaining["human"],
+            "time_until_next_compact": None if remaining is None else remaining["compact"],
+            "last_run": last_iso,
+            "since_last_human": None if since is None else since["human"],
+            "verdict": verdict,
+        }
+    )
+
+
+@mcp.tool()
+def agent_clock(
+    session_id: str = "default",
+    clock_id: str = "main",
+    action: str = "status",
+    timezone: str | None = None,
+) -> str:
+    """会话级计时器：start 开始 / pause 暂停 / resume 恢复 / reset 清零 / status 查询，返回累计计时与中文可读时长。"""
+    if action not in ("start", "pause", "resume", "reset", "status"):
+        return error_text(f"未知 action: {action}")
+    if timezone and not valid_timezone(timezone):
+        return error_text(f"无效时区: {timezone}")
+    now = _now_ms()
+    prev = _store.get_or_create_clock(session_id, clock_id, now)
+    nxt = clock_transition(prev, action, now)
+    _store.set_clock(session_id, clock_id, nxt)
+
+    elapsed_ms = clock_elapsed(nxt, now)
+    elapsed = decompose_duration(elapsed_ms)
+    running_segment = 0 if nxt.started_at is None else max(0, now - nxt.started_at)
+    state_name = {"idle": "未开始", "running": "计时中", "paused": "已暂停"}
+    action_name = {"start": "开始", "pause": "暂停", "resume": "恢复", "reset": "重置", "status": "查询"}
+    return json_text(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "clock_id": clock_id,
+            "action": action,
+            "action_label": action_name[action],
+            "state": nxt.state,
+            "state_label": state_name[nxt.state],
+            "elapsed_ms": elapsed_ms,
+            "elapsed_human": elapsed["human"],
+            "elapsed_compact": elapsed["compact"],
+            "parts": {
+                "days": elapsed["days"],
+                "hours": elapsed["hours"],
+                "minutes": elapsed["minutes"],
+                "seconds": elapsed["seconds_remainder"],
+            },
+            "accumulated_ms": nxt.accumulated_ms,
+            "running_segment_ms": running_segment,
+            "started_at": None if nxt.started_at is None else _iso_utc(nxt.started_at),
+            "paused_at": None if nxt.paused_at is None else _iso_utc(nxt.paused_at),
+            "updated_at": _iso_utc(nxt.updated_at),
+            "now_iso": snapshot(_now_datetime(), timezone or _default_tz())["iso"],
+            "unix_now": now,
         }
     )
 

@@ -16,6 +16,8 @@
 - ✅ **time_until** —— 距离截止/提醒时刻还剩多久
 - ✅ **timezone_convert** —— 任意 IANA 时区换算
 - ✅ **session_ping** —— 会话心跳：感知「对话过了多久」
+- ✅ **cron_mock** —— 模拟「现在到点了吗」，给定时决策（支持 cron / @宏 / every 30 minutes）
+- ✅ **agent_clock** —— 会话级计时器：开始 / 暂停 / 恢复 / 重置 / 查询
 - ✅ 零外部运行时依赖（时间源 = 系统时钟，时区 = IANA 内置库）
 - ✅ TypeScript + Python 双版本，npm / pip 即装即用
 - ✅ 支持 Ollama / LangChain / Claude Desktop / 任何 MCP 客户端
@@ -72,6 +74,8 @@ cd python && python -m time_agent_mcp
 | `time_until` | 距离目标时刻的倒计时 | `target` `timezone` `from`(TS)/`from_`(Python) |
 | `timezone_convert` | 时区换算 | `to_timezone` `from_timezone` `time` |
 | `session_ping` | 会话心跳，感知对话间隔 | `session_id` |
+| `cron_mock` | 模拟「到点了吗」的定时决策 | `schedule` `timezone` `now` |
+| `agent_clock` | 会话级计时器 | `session_id` `clock_id` `action` |
 
 ### 示例
 
@@ -92,6 +96,18 @@ timezone_convert { time: "2026-10-01T12:00:00", from_timezone: "Asia/Tokyo", to_
 
 # 对话过了多久
 session_ping { session_id: "deepseek-chat-01" }
+
+# 每天 18:00 到点了吗（定时决策）
+cron_mock { schedule: "0 18 * * *", timezone: "Asia/Shanghai" }
+# 或自然语法
+cron_mock { schedule: "every 30 minutes" }
+
+# 会话级计时器：跑批任务计时
+agent_clock { clock_id: "batch", action: "start" }
+agent_clock { clock_id: "batch", action: "status" }   # 查询
+agent_clock { clock_id: "batch", action: "pause" }    # 暂停
+agent_clock { clock_id: "batch", action: "resume" }   # 恢复
+agent_clock { clock_id: "batch", action: "reset" }    # 清零
 ```
 
 ## 为什么需要它
@@ -121,9 +137,9 @@ cd python && pip install -e ".[test]" && python -m pytest ../tests_py
 ## Roadmap
 
 - [x] M1：TS 版 5 个核心工具 + 示例 + 测试
-- [x] M2：Python 版 + 测试（双版本行为对齐）
-- [ ] M3：npm / PyPI 发布 + 演示 GIF + 各平台推广
-- [ ] M2+: `cron_mock`（到点了吗）、`agent_clock`（会话级计时器：开始/暂停/重置）
+- [x] M2：Python 版 + 测试（双版本行为对齐）+ cron_mock + agent_clock
+- [x] M3：npm / PyPI 发布
+- [ ] 演示 GIF + 各平台推广
 
 ## 生态
 
