@@ -13,3 +13,4 @@ build/
 .pytest_cache/
 .coverage
 .time-agent-mcp/
+04-time-agent-mcp.md
