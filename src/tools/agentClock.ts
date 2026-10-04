@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { SessionStore } from "../store/session.js";
 import { ClockAction, clockElapsed, clockTransition } from "../util/clock.js";
+import { err, ok } from "../util/result.js";
 import { decomposeDuration, isValidTimezone, snapshotNow } from "../util/time.js";
 
 export const agentClockSchema = {
@@ -23,6 +24,12 @@ const ACTION_LABEL: Record<ClockAction, string> = {
   status: "查询",
 };
 
+const STATE_NAME: Record<string, string> = {
+  idle: "未开始",
+  running: "计时中",
+  paused: "已暂停",
+};
+
 export async function agentClock(
   store: SessionStore,
   args: { session_id?: string; clock_id?: string; action?: ClockAction; timezone?: string }
@@ -32,10 +39,7 @@ export async function agentClock(
   const action: ClockAction = args.action ?? "status";
 
   if (args.timezone && !isValidTimezone(args.timezone)) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无效时区: ${args.timezone}` }) }],
-      isError: true,
-    };
+    return err(`无效时区: ${args.timezone}`);
   }
 
   const now = Date.now();
@@ -48,46 +52,29 @@ export async function agentClock(
   const runningSegmentMs = next.state === "running" && next.startedAt !== null ? now - next.startedAt : 0;
   const nowSnapshot = snapshotNow(args.timezone);
 
-  const stateName: Record<string, string> = {
-    idle: "未开始",
-    running: "计时中",
-    paused: "已暂停",
-  };
-
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            ok: true,
-            session_id: sessionId,
-            clock_id: clockId,
-            action,
-            action_label: ACTION_LABEL[action],
-            state: next.state,
-            state_label: stateName[next.state],
-            elapsed_ms: elapsedMs,
-            elapsed_human: elapsed.human,
-            elapsed_compact: elapsed.compact,
-            parts: {
-              days: elapsed.days,
-              hours: elapsed.hours,
-              minutes: elapsed.minutes,
-              seconds: elapsed.secondsRemainder,
-            },
-            accumulated_ms: next.accumulatedMs,
-            running_segment_ms: runningSegmentMs,
-            started_at: next.startedAt === null ? null : new Date(next.startedAt).toISOString(),
-            paused_at: next.pausedAt === null ? null : new Date(next.pausedAt).toISOString(),
-            updated_at: new Date(next.updatedAt).toISOString(),
-            now_iso: nowSnapshot.iso,
-            unix_now: now,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return ok({
+    ok: true,
+    session_id: sessionId,
+    clock_id: clockId,
+    action,
+    action_label: ACTION_LABEL[action],
+    state: next.state,
+    state_label: STATE_NAME[next.state],
+    elapsed_ms: elapsedMs,
+    elapsed_human: elapsed.human,
+    elapsed_compact: elapsed.compact,
+    parts: {
+      days: elapsed.days,
+      hours: elapsed.hours,
+      minutes: elapsed.minutes,
+      seconds: elapsed.secondsRemainder,
+    },
+    accumulated_ms: next.accumulatedMs,
+    running_segment_ms: runningSegmentMs,
+    started_at: next.startedAt === null ? null : new Date(next.startedAt).toISOString(),
+    paused_at: next.pausedAt === null ? null : new Date(next.pausedAt).toISOString(),
+    updated_at: new Date(next.updatedAt).toISOString(),
+    now_iso: nowSnapshot.iso,
+    unix_now: now,
+  });
 }

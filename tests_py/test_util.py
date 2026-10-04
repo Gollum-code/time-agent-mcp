@@ -57,6 +57,37 @@ def test_parse_to_utc_bad():
     assert parse_to_utc("") is None
 
 
+def test_parse_to_utc_invalid_dates():
+    assert parse_to_utc("2026-02-30T12:00", "Asia/Shanghai") is None
+    assert parse_to_utc("2026-04-31T10:00", "UTC") is None
+    assert parse_to_utc("2026-13-01T12:00", "UTC") is None
+    assert parse_to_utc("2026-01-01T24:00", "UTC") is None
+
+
+def test_parse_to_utc_leap_year():
+    assert parse_to_utc("2028-02-29T12:00", "UTC") is not None
+    assert parse_to_utc("2026-02-29T12:00", "UTC") is None
+
+
+def test_parse_to_utc_dst_gap():
+    """NY 2026-03-08 02:30 春季跳变不存在 → 拒绝。"""
+    assert parse_to_utc("2026-03-08T02:30", "America/New_York") is None
+
+
+def test_parse_to_utc_dst_ok():
+    """02:30 之后的 03:30 (EDT) = 07:30Z。"""
+    r = parse_to_utc("2026-03-08T03:30", "America/New_York")
+    assert r is not None
+    assert r.hour == 7 and r.minute == 30
+
+
+def test_parse_to_utc_dst_repeat():
+    """秋季 01:30 出现两次(EDT 05:30Z / EST 06:30Z)，取较早。"""
+    r = parse_to_utc("2026-11-01T01:30", "America/New_York")
+    assert r is not None
+    assert r.hour == 5 and r.minute == 30
+
+
 def test_format_offset():
     assert format_offset(timedelta(hours=8)) == "+08:00"
     assert format_offset(timedelta(hours=-5, minutes=-30)) == "-05:30"

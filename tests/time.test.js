@@ -11,6 +11,7 @@ import {
   isValidTimezone,
   parseToUtcMs,
   toZonedSnapshot,
+  zoneOffsetMs,
 } from "../dist/util/time.js";
 import { SessionStore } from "../dist/store/session.js";
 
@@ -44,6 +45,35 @@ test("parseToUtcMs: 垃圾输入返回 null", () => {
   assert.equal(parseToUtcMs(""), null);
 });
 
+test("parseToUtcMs: 非法日历日期拒绝（不滚动）", () => {
+  assert.equal(parseToUtcMs("2026-02-30 12:00", "Asia/Shanghai"), null); // 2月无30日
+  assert.equal(parseToUtcMs("2026-04-31 10:00", "UTC"), null); // 4月无31日
+  assert.equal(parseToUtcMs("2026-13-01 12:00", "UTC"), null); // 无13月
+  assert.equal(parseToUtcMs("2026-01-01 24:00", "UTC"), null); // 无24时
+  assert.equal(parseToUtcMs("2026-02-30T00:00:00+08:00"), null); // 显式偏移也校验
+});
+
+test("parseToUtcMs: 闰年 2/29 合法", () => {
+  assert.equal(parseToUtcMs("2028-02-29 12:00", "UTC"), Date.UTC(2028, 1, 29, 12, 0, 0));
+  assert.equal(parseToUtcMs("2026-02-29 12:00", "UTC"), null); // 2026 非闰年
+});
+
+test("parseToUtcMs: DST 空洞拒绝（NY 2026-03-08 02:30 不存在）", () => {
+  assert.equal(parseToUtcMs("2026-03-08 02:30", "America/New_York"), null);
+});
+
+test("parseToUtcMs: DST 后正常时刻", () => {
+  // 03-08 03:30 EDT(-4) = 07:30Z
+  assert.equal(parseToUtcMs("2026-03-08 03:30", "America/New_York"), Date.UTC(2026, 2, 8, 7, 30));
+  // 03-08 08:00 EDT(-4) = 12:00Z
+  assert.equal(parseToUtcMs("2026-03-08 08:00", "America/New_York"), Date.UTC(2026, 2, 8, 12, 0));
+});
+
+test("parseToUtcMs: DST 重复取第一次出现", () => {
+  // 11-01 01:30 出现两次(EDT 05:30Z / EST 06:30Z)，取较早
+  assert.equal(parseToUtcMs("2026-11-01 01:30", "America/New_York"), Date.UTC(2026, 10, 1, 5, 30));
+});
+
 test("toZonedSnapshot: 字段正确", () => {
   const snap = toZonedSnapshot(at("2026-10-01T04:00:00Z"), "Asia/Shanghai");
   assert.equal(snap.date, "2026-10-01");
@@ -57,6 +87,16 @@ test("toZonedSnapshot: 纽约夏令时偏移 -04:00", () => {
   const snap = toZonedSnapshot(at("2026-07-01T12:00:00Z"), "America/New_York");
   assert.equal(snap.offset, "-04:00");
   assert.equal(snap.time, "08:00:00");
+});
+
+test("zoneOffsetMs: 含毫秒的 Date 偏移仍为整分钟", () => {
+  // 回归：Intl 格式化到秒，若不四舍五入会得到 +07:59 之类的脏偏移
+  const d = new Date("2026-10-04T12:14:29.937Z");
+  assert.equal(zoneOffsetMs("Asia/Shanghai", d), 8 * 3600e3);
+  assert.equal(zoneOffsetMs("Asia/Kolkata", d), 5.5 * 3600e3);
+  const snap = toZonedSnapshot(d, "Asia/Shanghai");
+  assert.equal(snap.offset, "+08:00");
+  assert.match(snap.iso, /\+08:00$/);
 });
 
 test("decomposeDuration: 拆解正确", () => {

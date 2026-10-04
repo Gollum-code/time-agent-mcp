@@ -76,6 +76,11 @@ def parse_to_utc(value: str, tz: str | None = None) -> datetime | None:
 
     - 带偏移（+08:00 / Z）：直接解析。
     - 不带偏移：按 tz（缺省系统时区）解释为墙钟时间。
+
+    带往返校验：
+    - 非法日历日期（如 2026-02-30）→ None
+    - DST 春季空洞的墙钟时刻（如 NY 2026-03-08 02:30）→ None
+    - DST 秋季重复的墙钟时刻 → 解析为第一次出现（较早的 UTC）
     """
     raw = value.strip()
     if not raw:
@@ -83,24 +88,36 @@ def parse_to_utc(value: str, tz: str | None = None) -> datetime | None:
 
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
-    try:
-        if "+" in raw[10:] or "-" in raw[10:]:
-            parsed = datetime.fromisoformat(raw)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-    except ValueError:
-        return None
 
-    # 无偏移 → 按目标时区解释墙钟时间
+    # 显式偏移
+    if "+" in raw[10:] or "-" in raw[10:]:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    # 无偏移 → 按目标时区解释墙钟时间（含 DST 往返校验）
     target = tz if tz and valid_timezone(tz) else default_timezone()
     normalized = raw.replace(" ", "T") if " " in raw else raw
     try:
         naive = datetime.fromisoformat(normalized)
     except ValueError:
         return None
-    zoned = naive.replace(tzinfo=ZoneInfo(target))
-    return zoned.astimezone(timezone.utc)
+
+    zone = ZoneInfo(target)
+    # 不动点迭代：墙钟 -> 猜测 UTC -> 该 UTC 的墙钟偏移 -> 再调整，直至收敛
+    wall = naive
+    # 用 fold=0 和 fold=1 都试一次：zoneinfo 对重复时刻给出两个 UTC 候选
+    for fold in (0, 1):
+        candidate = wall.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc)
+        # 往返校验：把 candidate 转回目标时区的墙钟，须与输入一致
+        back = candidate.astimezone(zone)
+        if back.replace(tzinfo=None, fold=0) == wall.replace(tzinfo=None):
+            return candidate
+    return None
 
 
 def decompose_duration(ms: int) -> dict:

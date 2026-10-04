@@ -27,10 +27,12 @@
 ### 1. 直接跑（无需安装）
 
 ```bash
-# TypeScript 版
+# TypeScript 版（stdio，MCP 客户端默认接入）
 npm run dev          # 开发模式（tsx）
-# 或先构建再跑
 npm run build && node dist/server.js
+
+# TypeScript 版（Streamable HTTP，适合容器/远程）
+node dist/server.js --http --port 8787
 
 # Python 版
 cd python && python -m time_agent_mcp
@@ -123,8 +125,20 @@ agent_clock { clock_id: "batch", action: "reset" }    # 清零
 
 ## 状态存储
 
-默认**内存 Map**（零依赖）；设置环境变量 `TIME_AGENT_STORE_FILE` 可启用 JSON 文件持久化，
+默认**内存 Map**；设置环境变量 `TIME_AGENT_STORE_FILE` 可启用 JSON 文件持久化，
 重启后仍记得任务起始时刻。TypeScript 与 Python 版本共用同一文件格式。
+
+- `TIME_AGENT_MAX_SESSIONS`（默认 1000）：超过上限按最近活动时间（LRU）淘汰最旧会话，
+  防止无限膨胀。
+- 返回结果同时含 `content`（文本 JSON）与 `structuredContent`（结构化对象），
+  支持 MCP 的模型层直接消费对象。
+
+## 运行模式
+
+| 模式 | 启动方式 | 场景 |
+|---|---|---|
+| stdio | `node dist/server.js` | Claude Desktop / Cline 等桌面客户端 |
+| HTTP | `node dist/server.js --http --port 8787` | 容器 / 远程 / 集群部署 |
 
 ## 安装与开发
 
@@ -139,6 +153,7 @@ cd python && pip install -e ".[test]" && python -m pytest ../tests_py
 - [x] M1：TS 版 5 个核心工具 + 示例 + 测试
 - [x] M2：Python 版 + 测试（双版本行为对齐）+ cron_mock + agent_clock
 - [x] M3：npm / PyPI 发布
+- [x] 0.3.0：性能优化（cron 跳跃式扫描）、时区往返校验（拒非法日期/DST 空洞）、structuredContent、存储 LRU、HTTP transport、CI
 - [ ] 演示 GIF + 各平台推广
 
 ## 生态

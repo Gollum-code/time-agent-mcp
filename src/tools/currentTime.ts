@@ -2,6 +2,7 @@
  * current_time —— 现在几点、几号、周几、时区。
  */
 import { z } from "zod";
+import { err, ok } from "../util/result.js";
 import { isValidTimezone, snapshotNow } from "../util/time.js";
 
 export const currentTimeSchema = {
@@ -14,18 +15,7 @@ export const currentTimeSchema = {
 export async function currentTime(args: { timezone?: string }) {
   const tz = args.timezone;
   if (tz && !isValidTimezone(tz)) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无效时区: ${tz}` }) }],
-      isError: true,
-    };
+    return err(`无效时区: ${tz}`);
   }
-  const now = snapshotNow(tz);
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify({ ok: true, ...now }, null, 2),
-      },
-    ],
-  };
+  return ok({ ok: true, ...snapshotNow(tz) });
 }

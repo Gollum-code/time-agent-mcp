@@ -71,7 +71,9 @@ export function zoneOffsetMs(timezone: string, date: Date): number {
     Number(parts.minute),
     Number(parts.second)
   );
-  return wall - date.getTime();
+  // 墙钟差扣除毫秒残余（Intl 格式化到秒，date 含毫秒）；
+  // 真实 IANA 偏移永远是整分钟，四舍五入到分钟即精确
+  return Math.round((wall - date.getTime()) / 60_000) * 60_000;
 }
 
 /** 把毫秒偏移格式化为 ISO 偏移字符串，如 8 * 3600e3 → "+08:00"。 */
@@ -133,28 +135,114 @@ export function toZonedSnapshot(date: Date, timezone: string): ZonedSnapshot {
  *   - 带偏移/带 Z 的 ISO 8601（"2026-10-01T14:30:00+08:00"）
  *   - 不带偏移的 ISO（"2026-10-01T14:30:00" 或 "2026-10-01 14:30:00"）——
  *     配合 timezone（未给则按系统时区）解释为本地墙钟时间
- * 解析失败返回 null。
+ *
+ * 解析失败返回 null。带往返校验：
+ *   - 非法日历日期（如 2026-02-30）→ null
+ *   - DST 春季空洞的墙钟时刻（如 NY 2026-03-08 02:30）→ null
+ *   - DST 秋季重复的墙钟时刻 → 解析为第一次出现（较前的 UTC）
  */
 export function parseToUtcMs(value: string, timezone?: string): number | null {
   const raw = value.trim();
   if (!raw) return null;
 
-  // 1) 显式带偏移 / Z 的 ISO
-  if (/Z$|[+-]\d{2}:?\d{2}$/i.test(raw)) {
+  // ── 提取各组件（YYYY-MM-DD[ T]HH:MM[:SS[.fff]][+HH:MM|Z]）──
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i.exec(raw);
+  if (!m) return null;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = m[4] === undefined ? 0 : Number(m[4]);
+  const minute = m[5] === undefined ? 0 : Number(m[5]);
+  const second = m[6] === undefined ? 0 : Number(m[6]);
+  const offsetStr = m[7];
+
+  // 本地判合法性（避免 Date.parse 把 2/30 滚动成 3/2）
+  if (!isValidCalendarDateTime(year, month, day, hour, minute, second)) return null;
+
+  if (offsetStr) {
+    // 显式偏移：直接解析并做往返校验
     const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
+    if (Number.isNaN(ms)) return null;
+    // 该时刻在偏移时区下的墙钟应等于输入组件（否则是非法日期被滚动）
+    return roundTripCheckOffset(ms, offsetStr, { year, month, day, hour, minute, second }) ? ms : null;
   }
 
-  // 2) 不含偏移 → 规范化后按目标时区（默认系统时区）解释为墙钟时间
-  const normalized = raw.replace(" ", "T");
-  if (Number.isNaN(Date.parse(`${normalized}Z`))) return null;
-
+  // 不含偏移 → 按目标时区解释为墙钟，不动点迭代找真实 UTC，再往返校验
   const targetTz = timezone && isValidTimezone(timezone) ? timezone : defaultTimezone();
-  const firstGuess = Date.parse(`${normalized}Z`); // 先假设是 UTC
-  const offset = zoneOffsetMs(targetTz, new Date(firstGuess));
-  const corrected = firstGuess - offset; // 墙钟 − 偏移 = 真实 UTC
-  const offset2 = zoneOffsetMs(targetTz, new Date(corrected));
-  return firstGuess - offset2;
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second); // 先假定为 UTC
+  let utc = wall;
+  for (let i = 0; i < 6; i++) {
+    const off = zoneOffsetMs(targetTz, new Date(utc));
+    const next = wall - off;
+    if (next === utc) break;
+    utc = next;
+  }
+  // 不动点迭代收敛 → 该墙钟存在；不收敛（交替震荡）→ DST 空洞，两值往返都不符则拒绝
+  if (roundTripCheckZone(utc, targetTz, { year, month, day, hour, minute, second })) {
+    return utc;
+  }
+  // 秋季重复：尝试候选偏移的另一侧（第二个出现）
+  const offHere = zoneOffsetMs(targetTz, new Date(utc));
+  const alt = wall - offHere - Math.sign(offHere - zoneOffsetMs(targetTz, new Date(wall))) * 3600e3;
+  if (roundTripCheckZone(alt, targetTz, { year, month, day, hour, minute, second })) {
+    return alt;
+  }
+  return null; // 该墙钟时刻在目标时区不存在（DST 空洞或非法日期）
+}
+
+interface WallParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/** 公历日期合法性（含闰年 2/29）。 */
+function isValidCalendarDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > daysInGregorianMonth(year, month)) return false;
+  if (hour > 23 || minute > 59 || second > 60) return false;
+  if (year < 1000 || year > 9999) return false;
+  return true;
+}
+
+function daysInGregorianMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** 校验显式偏移 ISO 的墙钟是否与输入一致（防 2/30 → 3/2 滚动）。 */
+function roundTripCheckOffset(ms: number, offsetStr: string, p: WallParts): boolean {
+  let sign = 1;
+  let s = offsetStr.toUpperCase();
+  if (s === "Z") s = "+00:00";
+  if (s.startsWith("-")) sign = -1;
+  const digits = s.replace(/[^0-9]/g, "");
+  const offMin = sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2, 4)));
+  const shifted = new Date(ms + offMin * 60_000);
+  return (
+    shifted.getUTCFullYear() === p.year &&
+    shifted.getUTCMonth() === p.month - 1 &&
+    shifted.getUTCDate() === p.day &&
+    shifted.getUTCHours() === p.hour &&
+    shifted.getUTCMinutes() === p.minute &&
+    shifted.getUTCSeconds() === p.second
+  );
+}
+
+/** 校验某 UTC 时刻在目标时区的墙钟是否与输入一致（DST 空洞返回不一致）。 */
+function roundTripCheckZone(utcMs: number, timezone: string, p: WallParts): boolean {
+  const z = toZonedSnapshot(new Date(utcMs), timezone);
+  return (
+    z.date === `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}` &&
+    z.time === `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}:${String(p.second).padStart(2, "0")}`
+  );
 }
 
 /** 按系统默认时区（不带 timeZone 的 Intl 行为）取当前快照。 */

@@ -1,7 +1,7 @@
 {
   "name": "time-agent-mcp",
-  "version": "0.2.0",
-  "description": "给没有时间感的 LLM 装一个时钟 —— time-aware MCP Server (current_time / duration_elapsed / time_until / timezone_convert / session_ping / cron_mock / agent_clock)",
+  "version": "0.3.0",
+  "description": "缁欐病鏈夋椂闂存劅鐨?LLM 瑁呬竴涓椂閽?鈥斺€?time-aware MCP Server (current_time / duration_elapsed / time_until / timezone_convert / session_ping / cron_mock / agent_clock)",
   "license": "MIT",
   "type": "module",
   "main": "dist/server.js",

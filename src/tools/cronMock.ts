@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { evaluateCron } from "../util/cron.js";
+import { err, ok } from "../util/result.js";
 import { isValidTimezone, parseToUtcMs, snapshotNow } from "../util/time.js";
 
 export const cronMockSchema = {
@@ -19,20 +20,14 @@ export const cronMockSchema = {
 
 export async function cronMock(args: { schedule: string; timezone?: string; now?: string }) {
   if (args.timezone && !isValidTimezone(args.timezone)) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无效时区: ${args.timezone}` }) }],
-      isError: true,
-    };
+    return err(`无效时区: ${args.timezone}`);
   }
 
   let nowMs = Date.now();
   if (args.now !== undefined) {
     const parsed = parseToUtcMs(args.now, args.timezone);
     if (parsed === null) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无法解析 now 时刻: ${args.now}` }) }],
-        isError: true,
-      };
+      return err(`无法解析 now 时刻: ${args.now}`);
     }
     nowMs = parsed;
   }
@@ -40,46 +35,32 @@ export async function cronMock(args: { schedule: string; timezone?: string; now?
   let result;
   try {
     result = evaluateCron(args.schedule, args.timezone, nowMs);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `cron 解析失败: ${message}` }) }],
-      isError: true,
-    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return err(`cron 解析失败: ${message}`);
   }
 
   const { schedule, timing } = result;
   const now = snapshotNow(args.timezone);
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            ok: true,
-            schedule: args.schedule,
-            parsed: schedule.expr,
-            description: timing.humanSummary,
-            timezone: now.timezone,
-            now_iso: now.iso,
-            unix_now: nowMs,
-            matches_now: timing.matchesNow,
-            next_run: timing.nextRun === null ? null : new Date(timing.nextRun).toISOString(),
-            time_until_next_human: timing.timeUntilNext?.human ?? null,
-            time_until_next_compact: timing.timeUntilNext?.compact ?? null,
-            last_run: timing.lastRun === null ? null : new Date(timing.lastRun).toISOString(),
-            since_last_human: timing.sinceLast?.human ?? null,
-            verdict: timing.matchesNow
-              ? "已到点"
-              : timing.nextRun === null
-                ? "未来 5 年内不会触发"
-                : `未到点，${timing.timeUntilNext!.human}后触发`,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return ok({
+    ok: true,
+    schedule: args.schedule,
+    parsed: schedule.expr,
+    description: timing.humanSummary,
+    timezone: now.timezone,
+    now_iso: now.iso,
+    unix_now: nowMs,
+    matches_now: timing.matchesNow,
+    next_run: timing.nextRun === null ? null : new Date(timing.nextRun).toISOString(),
+    time_until_next_human: timing.timeUntilNext?.human ?? null,
+    time_until_next_compact: timing.timeUntilNext?.compact ?? null,
+    last_run: timing.lastRun === null ? null : new Date(timing.lastRun).toISOString(),
+    since_last_human: timing.sinceLast?.human ?? null,
+    verdict: timing.matchesNow
+      ? "已到点"
+      : timing.nextRun === null
+        ? "未来 5 年内不会触发"
+        : `未到点，${timing.timeUntilNext!.human}后触发`,
+  });
 }

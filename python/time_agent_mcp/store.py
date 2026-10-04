@@ -73,10 +73,18 @@ def _default_store_file() -> Path:
 
 
 class SessionStore:
-    def __init__(self, file_path: str | None = None) -> None:
+    def __init__(self, file_path: str | None = None, max_sessions: int | None = None) -> None:
         self._file = Path(file_path) if file_path else Path(os.environ.get("TIME_AGENT_STORE_FILE") or _default_store_file())
         self._sessions: dict[str, SessionRecord] = {}
         self._loaded = False
+        env_max = os.environ.get("TIME_AGENT_MAX_SESSIONS")
+        self._max_sessions = max_sessions or (int(env_max) if env_max and env_max.isdigit() and int(env_max) > 0 else 1000)
+
+    def _evict(self) -> None:
+        """LRU 淘汰：超过 max_sessions 时按 last_ping_at 最旧优先删除。"""
+        while len(self._sessions) > self._max_sessions:
+            oldest_id = min(self._sessions, key=lambda k: self._sessions[k].last_ping_at)
+            del self._sessions[oldest_id]
 
     def _load(self) -> None:
         if self._loaded:
@@ -93,6 +101,7 @@ class SessionStore:
 
     def _persist(self) -> None:
         try:
+            self._evict()
             self._file.parent.mkdir(parents=True, exist_ok=True)
             self._file.write_text(
                 json.dumps({"sessions": {k: _to_file(v) for k, v in self._sessions.items()}}, ensure_ascii=False, indent=2),
@@ -111,6 +120,7 @@ class SessionStore:
         if rec is None:
             rec = SessionRecord(id=sid, started_at=now, last_ping_at=now)
             self._sessions[sid] = rec
+            self._evict()
         return rec
 
     def ping(self, sid: str) -> SessionRecord:
@@ -147,6 +157,7 @@ class SessionStore:
         if rec is None:
             rec = SessionRecord(id=sid, started_at=now, last_ping_at=now)
             self._sessions[sid] = rec
+            self._evict()
         if clock_id not in rec.clocks:
             rec.clocks[clock_id] = empty_clock(now)
         self._persist()

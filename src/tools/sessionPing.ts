@@ -3,6 +3,7 @@
  */
 import { z } from "zod";
 import { SessionStore } from "../store/session.js";
+import { err, ok } from "../util/result.js";
 import { decomposeDuration, isValidTimezone, snapshotNow } from "../util/time.js";
 
 export const sessionPingSchema = {
@@ -19,10 +20,7 @@ export async function sessionPing(
 ) {
   const sessionId = args.session_id ?? "default";
   if (args.timezone && !isValidTimezone(args.timezone)) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无效时区: ${args.timezone}` }) }],
-      isError: true,
-    };
+    return err(`无效时区: ${args.timezone}`);
   }
 
   const before = store.get(sessionId);
@@ -34,34 +32,23 @@ export async function sessionPing(
   const gap = decomposeDuration(sinceLastPingMs);
   const nowSnapshot = snapshotNow(args.timezone);
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            ok: true,
-            session_id: rec.id,
-            first_seen: before === null,
-            started_at: new Date(rec.startedAt).toISOString(),
-            last_ping_at: new Date(rec.lastPingAt).toISOString(),
-            now_iso: nowSnapshot.iso,
-            unix_now: now,
-            session_age_human: age.human,
-            session_age_compact: age.compact,
-            since_last_ping_human: gap.human,
-            since_last_ping_compact: gap.compact,
-            hint:
-              before === null
-                ? "新会话已建立：从现在起，模型可以感知后续对话间隔了。"
-                : sinceLastPingMs > 60_000
-                  ? "距上次对话已超过 1 分钟，请留意时间流逝。"
-                  : "对话仍连续进行中。",
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return ok({
+    ok: true,
+    session_id: rec.id,
+    first_seen: before === null,
+    started_at: new Date(rec.startedAt).toISOString(),
+    last_ping_at: new Date(rec.lastPingAt).toISOString(),
+    now_iso: nowSnapshot.iso,
+    unix_now: now,
+    session_age_human: age.human,
+    session_age_compact: age.compact,
+    since_last_ping_human: gap.human,
+    since_last_ping_compact: gap.compact,
+    hint:
+      before === null
+        ? "新会话已建立：从现在起，模型可以感知后续对话间隔了。"
+        : sinceLastPingMs > 60_000
+          ? "距上次对话已超过 1 分钟，请留意时间流逝。"
+          : "对话仍连续进行中。",
+  });
 }

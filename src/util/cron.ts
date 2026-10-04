@@ -8,7 +8,7 @@
  * 周日：0 和 7 均代表星期日。
  */
 
-import { decomposeDuration, isValidTimezone, toZonedSnapshot } from "./time.js";
+import { decomposeDuration, isValidTimezone, toZonedSnapshot, zoneOffsetMs } from "./time.js";
 
 export interface CronField {
   /** 已展开的具体值（已去重升序） */
@@ -184,7 +184,7 @@ export function cronMatch(schedule: CronSchedule, date: Date, timezone: string):
 
 /**
  * 计算下一个触发时刻（unix ms）。from 为起始（不含）时刻。
- * 找不到（5 年扫描窗口内）返回 null。
+ * 找不到（5 年窗口内）返回 null。
  */
 export function nextFireTime(
   schedule: CronSchedule,
@@ -203,12 +203,90 @@ export function lastFireTime(
   return scanFireTime(schedule, fromMs, timezone, -1);
 }
 
-const SCAN_WINDOW_MINUTES = 5 * 366 * 24 * 60;
+const MAX_SCAN_DAYS = 5 * 366 + 5;
+
+/** 把「某时区墙钟 (y,mo,d,h,mi)」转换为其真实 UTC 毫秒。
+ *  - 普通情形：墙钟 − 偏移 = UTC
+ *  - DST 秋季重复：该墙钟有两个 UTC，取第一个（较早）出现
+ *  - DST 春季跳过（墙钟不存在）：返回 null
+ */
+function wallToUtc(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  timezone: string
+): number | null {
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  // 三个猜测偏移可覆盖两侧的 DST 边界
+  const candidates = [wall - 3600e3, wall, wall + 3600e3].map((t) =>
+    zoneOffsetMs(timezone, new Date(t))
+  );
+  for (const off of [...new Set(candidates)]) {
+    const utc = wall - off;
+    const f = zonedCronFields(new Date(utc), timezone);
+    if (f.year === y && f.month === mo && f.day === d && f.hour === h && f.minute === mi) {
+      return utc;
+    }
+  }
+  return null; // DST 跳变（该墙钟不存在）
+}
+
+/** 时区墙钟的「日字段」是否命中（月/日/周），并返回当月有效天（用于 29→30/31 clamp）。 */
+function monthDayMatches(schedule: CronSchedule, y: number, mo: number, d: number): boolean {
+  const weekday = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
+  const dowOk = fieldMatch(schedule.dayOfWeek, weekday);
+  const domOk = fieldMatch(schedule.dayOfMonth, d);
+  const domAny = schedule.dayOfMonth.any;
+  const dowAny = schedule.dayOfWeek.any;
+  if (domAny && dowAny) return true;
+  if (domAny) return dowOk;
+  if (dowAny) return domOk;
+  return domOk || dowOk;
+}
+
+/** 把 [min,max] 展开为升序值数组（用于通配字段）。 */
+function expand(field: CronField): number[] {
+  if (!field.any) return field.values;
+  const out: number[] = [];
+  for (let v = field.min; v <= field.max; v++) out.push(v);
+  return out;
+}
+
+/** y,mo 所在月的天数（公历）。 */
+function daysInMonth(y: number, mo: number): number {
+  return new Date(Date.UTC(y, mo, 0)).getUTCDate();
+}
+
+/** 墙钟日推进 ±1 天（跨月/跨年/回退到上月末日）。 */
+function advanceDay(y: number, mo: number, d: number, dir: 1 | -1): { y: number; mo: number; d: number } {
+  if (dir === 1) {
+    if (d < daysInMonth(y, mo)) return { y, mo, d: d + 1 };
+    if (mo === 12) return { y: y + 1, mo: 1, d: 1 };
+    return { y, mo: mo + 1, d: 1 };
+  }
+  if (d > 1) return { y, mo, d: d - 1 };
+  if (mo === 1) {
+    return { y: y - 1, mo: 12, d: daysInMonth(y - 1, 12) };
+  }
+  return { y, mo: mo - 1, d: daysInMonth(y, mo - 1) };
+}
+
+/** 跳到最近的命中月（在候选月集合里选离当前月最近的）。 */
+function jumpToMonth(y: number, mo: number, months: number[], dir: 1 | -1): { y: number; mo: number; d: number } {
+  if (dir === 1) {
+    for (const m of months) if (m > mo) return { y, mo: m, d: 1 };
+    return { y: y + 1, mo: months[0], d: 1 };
+  }
+  for (let i = months.length - 1; i >= 0; i--) if (months[i] < mo) return { y, mo: months[i], d: daysInMonth(y, months[i]) };
+  return { y: y - 1, mo: months[months.length - 1], d: daysInMonth(y - 1, months[months.length - 1]) };
+}
 
 /**
- * 扫描触发时刻。
- * - dir=1（next）：从 fromMs 的下一分钟起，结果严格晚于 fromMs。
- * - dir=-1（last）：从 fromMs 所在分钟起（含该分钟），结果为最近一次不晚于 fromMs 的触发。
+ * 跳跃式扫描触发时刻：按「月 → 日 → 时:分」分层推进，而非逐分钟暴力。
+ * - dir=1（next）：结果严格晚于 fromMs
+ * - dir=-1（last）：结果为最近一次不晚于 fromMs 的触发（含 from 所在分钟）
  */
 function scanFireTime(
   schedule: CronSchedule,
@@ -216,12 +294,50 @@ function scanFireTime(
   timezone: string,
   dir: 1 | -1
 ): number | null {
-  const baseMinute = Math.floor(fromMs / 60_000);
-  const startOffset = dir === 1 ? 1 : 0;
-  const cursor = new Date((baseMinute + startOffset) * 60_000);
-  for (let i = 0; i < SCAN_WINDOW_MINUTES; i++) {
-    if (cronMatch(schedule, cursor, timezone)) return cursor.getTime();
-    cursor.setTime(cursor.getTime() + dir * 60_000);
+  // 预先生成每天可能的「时:分」候选槽（目标时区墙钟的分钟集合）
+  const slots: number[] = [];
+  for (const h of expand(schedule.hour)) {
+    for (const mi of expand(schedule.minute)) slots.push(h * 60 + mi);
+  }
+  slots.sort((a, b) => a - b);
+  if (slots.length === 0) return null;
+
+  const ff = zonedCronFields(new Date(fromMs), timezone);
+  const fromMinuteOfDay = ff.hour * 60 + ff.minute;
+
+  // 月字段受限时的候选月（升序）；通配则 null 表示任意
+  const monthValues: number[] | null = schedule.month.any
+    ? null
+    : [...schedule.month.values].sort((a, b) => a - b);
+
+  let y = ff.year;
+  let mo = ff.month;
+  let d = ff.day;
+  let firstDay = true;
+
+  for (let dayIdx = 0; dayIdx < MAX_SCAN_DAYS; dayIdx++) {
+    const monthMatched = monthValues === null || monthValues.includes(mo);
+    if (monthMatched && monthDayMatches(schedule, y, mo, d)) {
+      const ordered = dir === 1 ? slots : [...slots].reverse();
+      for (const mod of ordered) {
+        if (firstDay) {
+          if (dir === 1 && mod <= fromMinuteOfDay) continue;
+          if (dir === -1 && mod > fromMinuteOfDay) continue;
+        }
+        const utc = wallToUtc(y, mo, d, Math.floor(mod / 60), mod % 60, timezone);
+        if (utc !== null && (dir === 1 ? utc > fromMs : utc <= fromMs)) return utc;
+      }
+    }
+    firstDay = false;
+
+    // 月度受限且当前月不命中 → 直接跳到最近的命中月；否则逐日推进
+    if (!monthMatched && monthValues !== null) {
+      const j = jumpToMonth(y, mo, monthValues, dir);
+      y = j.y; mo = j.mo; d = j.d;
+    } else {
+      const a = advanceDay(y, mo, d, dir);
+      y = a.y; mo = a.mo; d = a.d;
+    }
   }
   return null;
 }

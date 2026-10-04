@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { buildDurationResult, SessionStore } from "../store/session.js";
+import { err, ok } from "../util/result.js";
 import { isValidTimezone, parseToUtcMs, snapshotNow } from "../util/time.js";
 
 export const durationElapsedSchema = {
@@ -49,10 +50,7 @@ export async function durationElapsed(
 
   const tz = args.timezone;
   if (tz && !isValidTimezone(tz)) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无效时区: ${tz}` }) }],
-      isError: true,
-    };
+    return err(`无效时区: ${tz}`);
   }
 
   let startedMs: number;
@@ -61,10 +59,7 @@ export async function durationElapsed(
   if (args.started_at !== undefined) {
     const parsed = parseToUtcMs(args.started_at, args.timezone);
     if (parsed === null) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `无法解析起始时刻: ${args.started_at}` }) }],
-        isError: true,
-      };
+      return err(`无法解析起始时刻: ${args.started_at}`);
     }
     startedMs = parsed;
     store.startTask(sessionId, taskId, startedMs);
@@ -84,34 +79,23 @@ export async function durationElapsed(
 
   const result = buildDurationResult(sessionId, taskId, startedMs, nowTs, isFirstCall, args.label);
   const now = snapshotNow(tz);
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            ok: true,
-            session_id: result.sessionId,
-            task_id: result.taskId,
-            label: result.label,
-            first_call: result.isFirstCall,
-            started_at: result.startedIso,
-            now_iso: now.iso,
-            unix_now: result.now,
-            elapsed_ms: result.elapsedMs,
-            elapsed_human: result.elapsed.human,
-            elapsed_compact: result.elapsed.compact,
-            parts: {
-              days: result.elapsed.days,
-              hours: result.elapsed.hours,
-              minutes: result.elapsed.minutes,
-              seconds: result.elapsed.secondsRemainder,
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return ok({
+    ok: true,
+    session_id: result.sessionId,
+    task_id: result.taskId,
+    label: result.label,
+    first_call: result.isFirstCall,
+    started_at: result.startedIso,
+    now_iso: now.iso,
+    unix_now: result.now,
+    elapsed_ms: result.elapsedMs,
+    elapsed_human: result.elapsed.human,
+    elapsed_compact: result.elapsed.compact,
+    parts: {
+      days: result.elapsed.days,
+      hours: result.elapsed.hours,
+      minutes: result.elapsed.minutes,
+      seconds: result.elapsed.secondsRemainder,
+    },
+  });
 }

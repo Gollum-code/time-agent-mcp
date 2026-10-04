@@ -34,10 +34,14 @@ const DEFAULT_STORE_FILE = () =>
 export class SessionStore {
   private sessions = new Map<string, SessionRecord>();
   private readonly filePath?: string;
+  private readonly maxSessions: number;
   private loaded = false;
 
-  constructor(filePath?: string) {
+  constructor(filePath?: string, maxSessions?: number) {
     this.filePath = filePath ?? process.env.TIME_AGENT_STORE_FILE ?? DEFAULT_STORE_FILE();
+    const fromEnv = Number(process.env.TIME_AGENT_MAX_SESSIONS);
+    this.maxSessions =
+      maxSessions ?? (Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 1000);
   }
 
   /** 惰性加载：仅当需要读旧会话时读盘一次。 */
@@ -64,11 +68,28 @@ export class SessionStore {
   private persist(): void {
     if (!this.filePath) return;
     try {
+      this.evict();
       mkdirSync(dirname(this.filePath), { recursive: true });
       const out: StoreFile = { sessions: Object.fromEntries(this.sessions) };
       writeFileSync(this.filePath, JSON.stringify(out, null, 2), "utf8");
     } catch {
       // 写盘失败不致命：内存态仍可用
+    }
+  }
+
+  /** LRU 淘汰：超过 maxSessions 时，按 lastPingAt 最旧优先删除，防止无限膨胀。 */
+  private evict(): void {
+    while (this.sessions.size > this.maxSessions) {
+      let oldestId: string | null = null;
+      let oldestTs = Infinity;
+      for (const [id, rec] of this.sessions) {
+        if (rec.lastPingAt < oldestTs) {
+          oldestTs = rec.lastPingAt;
+          oldestId = id;
+        }
+      }
+      if (oldestId === null) break;
+      this.sessions.delete(oldestId);
     }
   }
 
@@ -78,6 +99,7 @@ export class SessionStore {
     if (!rec) {
       rec = { id, startedAt: Date.now(), lastPingAt: Date.now(), tasks: {}, clocks: {} };
       this.sessions.set(id, rec);
+      this.evict();
     }
     return rec;
   }
@@ -132,6 +154,7 @@ export class SessionStore {
     if (!rec) {
       rec = { id, startedAt: now, lastPingAt: now, tasks: {}, clocks: {} };
       this.sessions.set(id, rec);
+      this.evict();
     }
     if (!rec.clocks[clockId]) rec.clocks[clockId] = emptyClock(now);
     this.persist();
