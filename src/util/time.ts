@@ -118,7 +118,7 @@ export function toZonedSnapshot(date: Date, timezone: string): ZonedSnapshot {
     unix: date.getTime(),
     date: `${get("year")}-${get("month")}-${get("day")}`,
     weekday: WEEKDAYS_ZH[weekdayIndex],
-    time: `${get("hour").padStart(2, "0")}:${get("minute")}:${get("second")}`,
+    time: `${String(hour).padStart(2, "0")}:${get("minute")}:${get("second")}`,
     hour,
     minute: Number(get("minute")),
     second: Number(get("second")),

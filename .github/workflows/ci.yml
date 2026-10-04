@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install "mcp>=1.2.0" "pydantic>=2.0" pytest pytest-asyncio
+      - run: pip install "mcp>=1.2.0,<2" "pydantic>=2.0" pytest pytest-asyncio
       - name: 运行 pytest
         run: python -m pytest tests_py -q
         env:
